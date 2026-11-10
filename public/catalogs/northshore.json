@@ -1,0 +1,19 @@
+{
+  "format": "winner-catalog-1",
+  "id": "northshore",
+  "name": "Northshore Joinery",
+  "currency": "GBP",
+  "discount": 8,
+  "margin": 15,
+  "priceGroups": [1, 1.06, 1.12, 1.2, 1.3, 1.42, 1.55, 1.7],
+  "items": [
+    { "sku": "B600", "name": "Northshore base 600", "category": "base", "group": "Standard", "style": "standard", "mount": "floor", "width": 600, "height": 870, "depth": 560, "price": 410, "doorCount": 2 },
+    { "sku": "DB500", "name": "Northshore drawer 500", "category": "base", "group": "Drawer units", "style": "drawer", "mount": "floor", "width": 500, "height": 870, "depth": 560, "price": 445, "drawerCount": 3, "doorCount": 0 },
+    { "sku": "SB800", "name": "Northshore sink base 800", "category": "base", "group": "Sink units", "style": "sink", "mount": "floor", "width": 800, "height": 870, "depth": 560, "price": 540, "doorCount": 2, "drawerCount": 1 },
+    { "sku": "W600", "name": "Northshore wall 600", "category": "wall", "group": "Single door", "style": "standard", "mount": "wall", "width": 600, "height": 720, "depth": 330, "price": 330, "doorCount": 1, "elevation": 1400 },
+    { "sku": "LF600", "name": "Northshore flap 600", "category": "wall", "group": "Lift-up", "style": "flap", "mount": "wall", "width": 600, "height": 400, "depth": 330, "price": 365, "doorCount": 1, "elevation": 1600 },
+    { "sku": "WG600", "name": "Northshore glass 600", "category": "wall", "group": "Glass", "style": "glass", "mount": "wall", "width": 600, "height": 720, "depth": 330, "price": 390, "doorCount": 1, "elevation": 1400 },
+    { "sku": "TP600", "name": "Northshore pantry 600", "category": "tall", "group": "Pantry", "style": "pantry", "mount": "floor", "width": 600, "height": 2080, "depth": 560, "price": 980, "doorCount": 2 },
+    { "sku": "NS-B450", "name": "Northshore base 450", "category": "base", "group": "Standard", "style": "standard", "mount": "floor", "width": 450, "height": 870, "depth": 560, "minW": 300, "maxW": 600, "price": 365, "doorCount": 1 }
+  ]
+}
