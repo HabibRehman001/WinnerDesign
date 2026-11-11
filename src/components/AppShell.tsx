@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { catalogBySku } from '../catalog'
+import { nearestCornerPose } from '../lib/corners'
 import { downloadDesign, persistDesign, useDesignStore } from '../store/useDesignStore'
 import { fitPlan } from '../plan/camera'
 import { norm, sub } from '../lib/geometry'
@@ -124,6 +126,10 @@ export function AppShell() {
       if (key === 'm') store.setTool('beam')
       if (key === 'c') store.setTool('chimney')
       if (key === 'i') store.setTool('pipe')
+      if (key === 'e') {
+        store.setShowDimensions(true)
+        store.setTool('measure')
+      }
       if (key === 'f') fitPlan()
       if (event.key === '1') store.setView('plan')
       if (event.key === '2') store.setView('3d')
@@ -258,7 +264,16 @@ function nudgeSelection(key: string, step: number) {
     if (key === 'ArrowUp') dy = -step
     if (key === 'ArrowDown') dy = step
   }
-  store.updateItem(item.id, { x: item.x + dx, y: item.y + dy })
+  const next = { x: item.x + dx, y: item.y + dy }
+  const spec = catalogBySku[item.sku]
+  if (spec && (spec.style === 'corner' || spec.style === 'carousel')) {
+    const snapped = nearestCornerPose({ ...item, ...next }, { width: item.width, depth: item.depth }, store.walls)
+    if (snapped) {
+      store.updateItem(item.id, snapped)
+      return
+    }
+  }
+  store.updateItem(item.id, next)
 }
 
 function viewLabel(view: string) {

@@ -1,17 +1,11 @@
 import * as BABYLON from 'babylonjs'
 import { DOOR_STYLES } from '../../catalog'
+import { layoutFronts, type LaidFront } from '../../lib/fronts'
 import type { CatalogItem, DesignOptions, DoorStyle, HandlePlacement, Materials, PlacedItem } from '../../types'
 import type { Finish } from './materials'
 import { box, cylinder, node, sphere, type BuildContext } from './parts'
 
-interface Front {
-  x: number
-  y: number
-  w: number
-  h: number
-  kind: 'door' | 'drawer' | 'glass' | 'oven' | 'flap'
-  hinge: 'left' | 'right' | 'top' | 'center'
-}
+type Front = LaidFront
 
 export interface Hinge {
   pivot: BABYLON.TransformNode
@@ -46,8 +40,7 @@ export function doorFinish(color: string, style: DoorStyle, grain: number): Fini
 
 export function hingeValue(hinge: Hinge, degrees: number) {
   const radians = (degrees * Math.PI) / 180
-  if (hinge.mode === 'swing') return hinge.sign * radians
-  if (hinge.mode === 'flap') return -radians
+  if (hinge.mode === 'swing' || hinge.mode === 'flap') return hinge.sign * radians
   if (hinge.mode === 'slide') return hinge.rest + (radians / (Math.PI / 2)) * 0.28
   return hinge.rest
 }
@@ -94,7 +87,7 @@ export function buildItem(ctx: BuildContext, item: PlacedItem, spec: CatalogItem
   } else {
     box(ctx, [w - 0.004, carcassH, carcassD], CARCASS, root, [0, plinth + carcassH / 2, -0.01])
     const hostedSteel = env.items.some((other) => other.hostId === item.id && other.sku === 'FF-60')
-    for (const front of frontsOf(item, spec, plinth)) {
+    for (const front of layoutFronts(item, spec, plinth)) {
       hinges.push(buildFront(ctx, root, front, d, hostedSteel ? doorFinish('#D5DDE3', 'high-gloss', 0) : face, materials, spec.mount))
     }
     if (materials.handle === 'gola' || materials.handlePlacement === 'handleless') {
@@ -105,9 +98,9 @@ export function buildItem(ctx: BuildContext, item: PlacedItem, spec: CatalogItem
 }
 
 function buildFront(ctx: BuildContext, root: BABYLON.Node, front: Front, depth: number, face: Finish, materials: Materials, mount: CatalogItem['mount']): Hinge {
-  const sign = front.hinge === 'right' ? 1 : -1
+  const sign = front.hinge === 'right' || front.hinge === 'bottom' ? 1 : -1
   const hx = front.hinge === 'left' || front.hinge === 'right' ? sign * (front.w / 2) : 0
-  const hy = front.hinge === 'top' || front.kind === 'flap' ? front.h / 2 : 0
+  const hy = front.hinge === 'top' || front.kind === 'flap' ? front.h / 2 : front.hinge === 'bottom' ? -front.h / 2 : 0
   const anchor = node(ctx, 'front', root, [front.x + hx, front.y + hy, 0])
   const rest = depth / 2 - 0.008
   const pivot = node(ctx, 'pivot', anchor, [0, 0, rest])
@@ -120,9 +113,9 @@ function buildFront(ctx: BuildContext, root: BABYLON.Node, front: Front, depth: 
   else box(ctx, [front.w, front.h, 0.018], face, leaf)
   if (front.kind !== 'oven') handle(ctx, leaf, front, materials.handle, materials.handlePlacement, materials.handleColor, mount)
 
-  const mode: Hinge['mode'] =
-    front.kind === 'oven' ? 'fixed' : front.hinge === 'top' || front.kind === 'flap' ? 'flap' : front.kind === 'drawer' || front.hinge === 'center' ? 'slide' : 'swing'
-  return { pivot, mode, sign: front.hinge === 'right' ? 1 : -1, rest }
+  const flap = front.hinge === 'top' || front.hinge === 'bottom' || front.kind === 'flap'
+  const mode: Hinge['mode'] = front.kind === 'oven' ? 'fixed' : flap ? 'flap' : front.kind === 'drawer' || front.hinge === 'center' ? 'slide' : 'swing'
+  return { pivot, mode, sign, rest }
 }
 
 function shaker(ctx: BuildContext, parent: BABYLON.Node, w: number, h: number, face: Finish) {
@@ -160,9 +153,9 @@ function handle(ctx: BuildContext, parent: BABYLON.Node, front: Front, style: Ma
   if (style === 'gola' || placement === 'handleless') return
   const metal: Finish = { color, metallic: 0.85, roughness: 0.22 }
   const knob = style === 'knob' || placement === 'knob'
-  const horizontal = placement === 'horizontal-top' || front.kind === 'drawer' || front.kind === 'flap' || front.hinge === 'top' || (placement === 'auto' && mount === 'wall')
+  const horizontal = placement === 'horizontal-top' || front.kind === 'drawer' || front.kind === 'flap' || front.hinge === 'top' || front.hinge === 'bottom' || (placement === 'auto' && mount === 'wall')
   const x = horizontal || knob ? 0 : front.hinge === 'left' ? front.w / 2 - 0.045 : front.hinge === 'right' ? -front.w / 2 + 0.045 : 0
-  const y = horizontal ? (front.kind === 'drawer' ? 0 : front.h / 2 - 0.045) : 0
+  const y = front.hinge === 'bottom' ? -front.h / 2 + 0.045 : horizontal ? (front.kind === 'drawer' ? 0 : front.h / 2 - 0.045) : 0
   if (knob) {
     const kx = x || (front.hinge === 'left' ? front.w / 2 - 0.05 : front.hinge === 'right' ? -front.w / 2 + 0.05 : 0)
     sphere(ctx, 0.012, { ...metal, metallic: 0.8, roughness: 0.25 }, parent, [kx, horizontal ? y : 0, 0.022])
@@ -207,51 +200,3 @@ function buildAppliance(ctx: BuildContext, item: PlacedItem, spec: CatalogItem, 
   return root
 }
 
-function frontsOf(item: PlacedItem, spec: CatalogItem, plinth: number): Front[] {
-  const w = item.width / 1000
-  const h = item.height / 1000
-  const gap = 0.003
-  const usable = Math.max(0.05, h - plinth)
-  if (spec.style === 'oven-tower') {
-    const drawerH = 0.18
-    const ovenH = 0.6
-    const rest = Math.max(0.08, usable - drawerH - ovenH)
-    return [
-      { x: 0, y: plinth + drawerH / 2, w: w - gap * 2, h: drawerH - gap, kind: 'drawer', hinge: 'center' },
-      { x: 0, y: plinth + drawerH + ovenH / 2, w: w - 0.05, h: ovenH - 0.03, kind: 'oven', hinge: 'center' },
-      { x: 0, y: plinth + drawerH + ovenH + rest / 2, w: w - gap * 2, h: rest - gap, kind: 'door', hinge: item.handing === 'left' ? 'left' : 'right' },
-    ]
-  }
-  if (spec.drawerCount > 0 && spec.doorCount === 0) {
-    const dh = usable / spec.drawerCount
-    return Array.from({ length: spec.drawerCount }, (_, index) => ({ x: 0, y: plinth + dh * index + dh / 2, w: w - gap * 2, h: dh - gap, kind: 'drawer' as const, hinge: 'center' as const }))
-  }
-  if (spec.style === 'sink' && spec.drawerCount > 0) {
-    const drawerH = 0.16
-    const doorH = usable - drawerH
-    const doors = Math.max(1, spec.doorCount)
-    const dw = w / doors
-    return [
-      ...Array.from({ length: doors }, (_, index) => ({
-        x: -w / 2 + dw * index + dw / 2,
-        y: plinth + doorH / 2,
-        w: dw - gap,
-        h: doorH - gap,
-        kind: 'door' as const,
-        hinge: (doors === 1 ? (item.handing === 'left' ? 'left' : 'right') : index === 0 ? 'left' : 'right') as Front['hinge'],
-      })),
-      { x: 0, y: plinth + doorH + drawerH / 2, w: w - gap * 2, h: drawerH - gap, kind: 'drawer', hinge: 'center' },
-    ]
-  }
-  const doors = Math.max(1, spec.doorCount || 1)
-  const dw = w / doors
-  const kind: Front['kind'] = spec.style === 'glass' ? 'glass' : spec.style === 'flap' ? 'flap' : 'door'
-  return Array.from({ length: doors }, (_, index) => ({
-    x: -w / 2 + dw * index + dw / 2,
-    y: plinth + usable / 2,
-    w: dw - gap,
-    h: usable - gap,
-    kind,
-    hinge: kind === 'flap' ? 'top' : doors === 1 ? (item.handing === 'left' ? 'left' : 'right') : index === 0 ? 'left' : 'right',
-  }))
-}

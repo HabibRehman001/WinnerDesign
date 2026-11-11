@@ -16,7 +16,10 @@ export function CatalogPanel({ width }: { width: number }) {
   const options = useDesignStore((state) => state.options)
   const catalogs = useCatalogStore((state) => state.catalogs)
   const activeId = useCatalogStore((state) => state.activeId)
+  const activeVersion = useCatalogStore((state) => state.activeVersion)
   const revision = useCatalogStore((state) => state.revision)
+  const [priceNote, setPriceNote] = useState('')
+  const visible = catalogs.filter((catalog) => !catalog.hidden)
   const needle = query.trim().toLowerCase()
 
   const tree = useMemo(() => {
@@ -46,23 +49,35 @@ export function CatalogPanel({ width }: { width: number }) {
           </button>
         </div>
         <select
-          value={activeId}
+          value={`${activeId}@${activeVersion}`}
           onChange={(event) => {
-            const id = event.target.value
-            const catalog = catalogs.find((entry) => entry.id === id)
-            useCatalogStore.getState().select(id)
-            if (catalog && catalog.id !== 'winner-core') {
+            const catalog = visible.find((entry) => `${entry.id}@${entry.version}` === event.target.value)
+            if (!catalog) return
+            useCatalogStore.getState().select(catalog.id, catalog.version)
+            if (catalog.id !== 'winner-core') {
               useDesignStore.getState().patchOptions({ currency: catalog.currency, discount: catalog.discount, margin: catalog.margin })
             }
           }}
           className="mt-2 w-full rounded border border-white/10 bg-shell-deep px-2 py-1.5 text-sm outline-none"
         >
-          {catalogs.map((catalog) => (
-            <option key={catalog.id} value={catalog.id}>
-              {catalog.name}
+          {visible.map((catalog) => (
+            <option key={`${catalog.id}@${catalog.version}`} value={`${catalog.id}@${catalog.version}`}>
+              {catalog.name} v{catalog.version}
             </option>
           ))}
         </select>
+        <button
+          className="mt-2 w-full rounded bg-white/10 py-1 text-[10px] uppercase tracking-wider"
+          onClick={() => {
+            const skus = useDesignStore.getState().items.map((item) => item.sku)
+            const report = useCatalogStore.getState().applyPrices(skus)
+            const missing = report.missing.length ? ` Still drawn, not in this catalogue: ${report.missing.join(', ')}.` : ''
+            setPriceNote(`Prices now use ${report.name} v${report.version}. Drawn sizes were left unchanged.${missing}`)
+          }}
+        >
+          Apply catalogue prices
+        </button>
+        {priceNote && <p className="mt-2 text-[11px] leading-relaxed text-white/55">{priceNote}</p>}
         <input
           ref={fileRef}
           type="file"

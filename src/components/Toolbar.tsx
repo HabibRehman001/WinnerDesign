@@ -43,6 +43,7 @@ const GROUPS: { label: string; tools: { id: Tool | 'undo' | 'redo' | 'delete' | 
       { id: 'zoom-in', label: 'Zoom +', hint: '+' },
       { id: 'zoom-out', label: 'Zoom -', hint: '-' },
       { id: 'dims', label: 'Dims', hint: 'Measures' },
+      { id: 'measure', label: 'Measure', hint: 'E' },
     ],
   },
 ]
@@ -105,6 +106,11 @@ function runTool(id: string) {
   if (id === 'zoom-in') return zoomPlan(1.15)
   if (id === 'zoom-out') return zoomPlan(1 / 1.15)
   if (id === 'dims') return store.setShowDimensions(!store.showDimensions)
+  if (id === 'measure') {
+    store.setShowDimensions(true)
+    store.setTool('measure')
+    return
+  }
   store.setTool(id as Tool)
 }
 
@@ -128,6 +134,7 @@ function ToolGlyph({ id }: { id: string }) {
       {id === 'zoom-in' && <path d="M11 6a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM15.5 15.5L20 20M11 8v6M8 11h6" />}
       {id === 'zoom-out' && <path d="M11 6a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM15.5 15.5L20 20M8 11h6" />}
       {id === 'dims' && <path d="M4 17h16M7 17v-3M17 17v-3M8 8h8M8 8v3M16 8v3" />}
+      {id === 'measure' && <path d="M4 16h16M6 16v-3M18 16v-3M5 8h14M7 8v4M17 8v4" />}
     </svg>
   )
 }

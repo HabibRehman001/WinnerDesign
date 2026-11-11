@@ -15,6 +15,18 @@ export type Tool =
   | 'chimney'
   | 'pipe'
   | 'place'
+  | 'measure'
+
+/** Where an automatic measurement line sits. */
+export type DimensionAlign = 'auto' | 'close' | 'manual'
+
+/** A free-drawn measurement. `offset` is the signed distance of the line from a–b. */
+export interface Measure {
+  id: string
+  a: Pt
+  b: Pt
+  offset: number
+}
 
 export type ViewMode = 'plan' | '3d' | 'elevation' | 'split' | 'walk'
 
@@ -60,6 +72,12 @@ export type HandleStyle = 'bar' | 'knob' | 'gola'
 export type EdgeProfile = 'square' | 'pencil' | 'bullnose'
 export type LightingPreset = 'studio' | 'daylight' | 'evening'
 export type Handing = 'left' | 'right'
+export type DoorHinge = 'left' | 'right' | 'top' | 'bottom'
+
+export interface DoorFront {
+  index: number
+  hinge: DoorHinge
+}
 export type ProjectStatus = 'enquiry' | 'survey' | 'validate' | 'design' | 'review' | 'quote' | 'approval' | 'order' | 'fulfilment' | 'install'
 export type DocumentPrivacy = 'private' | 'shop'
 
@@ -142,6 +160,12 @@ export interface Wall {
   heightA?: number
   /** Ceiling height at endpoint B, millimetres. */
   heightB?: number
+  /** Overrides the system dimension alignment. Omitted walls inherit it. */
+  dimensionAlign?: DimensionAlign
+  /** Overall line distance from the wall centre, along the outward normal. */
+  dimensionOffset?: number
+  /** Cabinet-chain distance from the wall centre, along the inward normal. */
+  runOffset?: number
 }
 
 export interface Opening {
@@ -183,17 +207,28 @@ export interface PlacedItem {
   hostId?: string
   /** Door, flap, or drawer opening in degrees. 0 is closed. */
   open?: number
+  /** Per-door hinge overrides. Missing doors keep the handing default. */
+  fronts?: DoorFront[]
 }
 
 export interface Materials {
   doorStyle: DoorStyle
   doorColor: string
+  /** RAL or NCS code for the door colour. Empty when the colour is a plain hex value. */
+  doorColorCode: string
   worktop: WorktopFinish
   worktopColor: string
+  /** RAL or NCS code for the worktop colour. Empty when the colour is a plain hex value. */
+  worktopColorCode: string
   wallPaint: string
   floorTile: string
   grout: string
   tileSize: number
+  splashTile: string
+  splashGrout: string
+  splashTileSize: number
+  /** Tile direction on the splashback, degrees. */
+  splashTileAngle: number
   handle: HandleStyle
   handleColor: string
   handlePlacement: HandlePlacement
@@ -232,6 +267,8 @@ export interface DesignOptions {
   discount: number
   margin: number
   currency: CurrencyCode
+  /** Default placement for automatic measurement lines. */
+  dimensionAlign: DimensionAlign
 }
 
 export interface ClientInfo {
@@ -245,11 +282,14 @@ export type Selection =
   | { type: 'opening'; id: string }
   | { type: 'fixture'; id: string }
   | { type: 'item'; id: string }
+  | { type: 'measure'; id: string }
+  | { type: 'dimension'; id: string; wallId: string; kind: 'overall' | 'run' }
 
 export interface DesignSnapshot {
   projectName: string
   defaultThickness: number
   walls: Wall[]
+  measures: Measure[]
   openings: Opening[]
   fixtures: Fixture[]
   items: PlacedItem[]

@@ -42,7 +42,8 @@ function boxesOverlap(a: PlacedItem, b: PlacedItem) {
     const project = (points: { x: number; y: number }[]) => points.map((point) => (point.x * axis.x + point.y * axis.y) / length)
     const ap = project(ac)
     const bp = project(bc)
-    if (Math.max(...ap) < Math.min(...bp) - 2 || Math.max(...bp) < Math.min(...ap) - 2) return false
+    const overlap = Math.min(Math.max(...ap), Math.max(...bp)) - Math.max(Math.min(...ap), Math.min(...bp))
+    if (overlap <= 20) return false
   }
   return true
 }
@@ -62,7 +63,7 @@ export function designWarnings(items: PlacedItem[], walls: Wall[], fixtures: Fix
     for (let j = i + 1; j < placed.length; j++) {
       const a = placed[i]
       const b = placed[j]
-      if (a.hostId === b.id || b.hostId === a.id) continue
+      if (a.hostId === b.id || b.hostId === a.id || (a.hostId && a.hostId === b.hostId)) continue
       if (!sameBand(a, b) || !boxesOverlap(a, b)) continue
       warnings.push({ itemId: a.id, message: `${catalogBySku[a.sku].name} overlaps ${catalogBySku[b.sku].name}` })
       warnings.push({ itemId: b.id, message: `${catalogBySku[b.sku].name} overlaps ${catalogBySku[a.sku].name}` })

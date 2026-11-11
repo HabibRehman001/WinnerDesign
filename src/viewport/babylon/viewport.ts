@@ -80,7 +80,9 @@ export class DesignViewport {
     this.shadows.usePercentageCloserFiltering = true
     this.shadows.bias = 0.0004
     this.highlight = new BABYLON.HighlightLayer('selection', this.scene)
+    this.highlight.innerGlow = false
     this.warnings = new BABYLON.HighlightLayer('warnings', this.scene)
+    this.warnings.innerGlow = false
     this.scene.activeCamera = this.orbit
 
     this.scene.onPointerObservable.add((info) => {
@@ -308,17 +310,34 @@ export class DesignViewport {
 
   private applyWarnings(items: PlacedItem[], walls: ReturnType<typeof useDesignStore.getState>['walls'], fixtures: ReturnType<typeof useDesignStore.getState>['fixtures']) {
     this.warnings.removeAllMeshes()
-    const ids = new Set(designWarnings(items, walls, fixtures).map((warning) => warning.itemId))
+    const warnings = designWarnings(items, walls, fixtures)
+    const ids = new Set(warnings.map((warning) => warning.itemId))
     const tint = linear('#E11D48')
+    let warningMeshes = 0
     for (const built of this.built) {
       const id = built.root.metadata?.itemId as string | undefined
       if (!id || !ids.has(id)) continue
       for (const mesh of built.root.getChildMeshes(false)) {
         const alpha = (mesh.material as BABYLON.PBRMaterial | null)?.alpha
         if (alpha != null && alpha < 1) continue
+        let node: BABYLON.Node | null = mesh
+        let front = false
+        while (node) {
+          if (node.name === 'front') {
+            front = true
+            break
+          }
+          node = node.parent
+        }
+        if (front) continue
         this.warnings.addMesh(mesh as BABYLON.Mesh, tint)
+        warningMeshes += 1
       }
     }
+    // #region agent log
+    const opened = items.filter((item) => (item.open ?? 0) > 1).map((item) => ({ id: item.id, sku: item.sku, open: item.open ?? 0, warned: ids.has(item.id) }))
+    fetch('http://127.0.0.1:7769/ingest/6710b84c-c925-44b4-91c7-80543495934e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'17d69f'},body:JSON.stringify({sessionId:'17d69f',hypothesisId:'A-C',location:'viewport.ts:applyWarnings',message:'warning highlight',data:{warningCount:warnings.length,messages:warnings.map((warning)=>warning.message).slice(0,8),warnedIds:[...ids],warningMeshes,innerGlow:this.warnings.innerGlow,opened},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
   }
 
   private applySelection(selection: Selection | null) {
@@ -327,10 +346,19 @@ export class DesignViewport {
     const built = this.built.find((entry) => entry.root.metadata?.itemId === selection.id)
     if (!built) return
     const meshes = built.root.getChildMeshes(false)
+    let selectedMeshes = 0
+    const colours: string[] = []
     for (const mesh of meshes) {
-      if (mesh.material && (mesh.material as BABYLON.PBRMaterial).alpha != null && (mesh.material as BABYLON.PBRMaterial).alpha < 1) continue
+      const material = mesh.material as BABYLON.PBRMaterial | null
+      if (material?.alpha != null && material.alpha < 1) continue
       this.highlight.addMesh(mesh as BABYLON.Mesh, linear('#F59E0B'))
+      selectedMeshes += 1
+      if (colours.length < 4 && material?.albedoColor) colours.push(material.albedoColor.toHexString())
     }
+    // #region agent log
+    const item = useDesignStore.getState().items.find((entry) => entry.id === selection.id)
+    fetch('http://127.0.0.1:7769/ingest/6710b84c-c925-44b4-91c7-80543495934e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'17d69f'},body:JSON.stringify({sessionId:'17d69f',hypothesisId:'B-D-E',location:'viewport.ts:applySelection',message:'selection highlight',data:{itemId:selection.id,sku:item?.sku,open:item?.open??0,selectedMeshes,innerGlow:this.highlight.innerGlow,albedo:colours},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
   }
 
   private stepWalk() {

@@ -1,4 +1,5 @@
 import { catalogBySku } from '../catalog'
+import { nearestCornerPose } from '../lib/corners'
 import {
   add,
   buildChains,
@@ -21,8 +22,9 @@ import {
 import { buildPlates } from '../lib/joinery'
 import { clearancePoint } from '../lib/obstacles'
 import { wallJoints, wallProfile } from '../lib/roof'
-import { buildRuns, unitInterval } from '../lib/runs'
-import type { DesignOptions, Fixture, Materials, Opening, PlacedItem, Selection, Wall } from '../types'
+import { layoutDimensions, measureLine, type DimLine } from '../lib/dimensions'
+import { buildRuns } from '../lib/runs'
+import type { DesignOptions, Fixture, Materials, Measure, Opening, PlacedItem, Selection, Wall } from '../types'
 import type { CatalogItem } from '../types'
 
 export interface Cam {
@@ -35,6 +37,7 @@ export interface PlanDraft {
   snapPoint: PtLike | null
   snapLabel: string
   wallStart: PtLike | null
+  measureStart: PtLike | null
   hover: Selection | null
   ghostItem: PlacedItem | null
   ghostOpening: Opening | null
@@ -59,6 +62,7 @@ export interface PlanDesign {
   selection: Selection | null
   showDimensions: boolean
   defaultThickness: number
+  measures: Measure[]
 }
 
 function w2s(point: PtLike, cam: Cam, width: number, height: number) {
@@ -224,7 +228,11 @@ export function drawPlan(
   }
 
   if (design.showDimensions) {
-    drawDimensions(ctx, walls, items, inner, cam, width, height)
+    drawDimensions(ctx, design, walls, items, cam, width, height, draft?.hover ?? null)
+    if (draft?.measureStart && draft.snapPoint) {
+      const preview = measureLine({ id: 'preview', a: draft.measureStart, b: draft.snapPoint, offset: 180 })
+      if (preview) paintDimension(ctx, preview, cam, width, height, false)
+    }
     drawSlopes(ctx, walls, design.options, cam, width, height)
     for (const joint of wallJoints(walls)) {
       const screen = w2s(joint.point, cam, width, height)
@@ -502,70 +510,63 @@ function drawItem(
 
 function drawDimensions(
   ctx: CanvasRenderingContext2D,
+  design: PlanDesign,
   walls: Wall[],
   items: PlacedItem[],
-  inner: PtLike[] | null,
   cam: Cam,
   width: number,
   height: number,
+  hover: Selection | null,
 ) {
-  ctx.strokeStyle = '#5C6570'
-  ctx.lineWidth = 1
-  ctx.fillStyle = '#5C6570'
-  if (inner && inner.length >= 3) {
-    const centroid = inner.reduce((acc, point) => add(acc, point), { x: 0, y: 0 })
-    centroid.x /= inner.length
-    centroid.y /= inner.length
-    for (let i = 0; i < inner.length; i++) {
-      const a = inner[i]
-      const b = inner[(i + 1) % inner.length]
-      const length = dist(a, b)
-      if (length < 80) continue
-      const mid = lerp(a, b, 0.5)
-      const outward = norm(sub(mid, centroid))
-      const lineA = add(a, mul(outward, 240))
-      const lineB = add(b, mul(outward, 240))
-      const sa = w2s(a, cam, width, height)
-      const sb = w2s(b, cam, width, height)
-      const la = w2s(lineA, cam, width, height)
-      const lb = w2s(lineB, cam, width, height)
-      ctx.beginPath()
-      ctx.moveTo(sa.x, sa.y)
-      ctx.lineTo(la.x, la.y)
-      ctx.moveTo(sb.x, sb.y)
-      ctx.lineTo(lb.x, lb.y)
-      ctx.moveTo(la.x, la.y)
-      ctx.lineTo(lb.x, lb.y)
-      ctx.stroke()
-      const label = w2s(lerp(lineA, lineB, 0.5), cam, width, height)
-      badge(ctx, label.x, label.y, formatMm(length), 'room')
-    }
-  } else {
-    for (const wall of walls) {
-      const mid = lerp(wall.a, wall.b, 0.5)
-      const screen = w2s(mid, cam, width, height)
-      badge(ctx, screen.x, screen.y, formatMm(wallLength(wall)), 'room')
-    }
-  }
+  const lines = layoutDimensions(walls, items, design.measures, design.options.dimensionAlign)
+  for (const line of lines) paintDimension(ctx, line, cam, width, height, dimensionActive(line, design.selection) || dimensionActive(line, hover))
+}
 
-  for (const wall of walls) {
-    const len = wallLength(wall)
-    const group = items.filter((item) => item.wallId === wall.id && catalogBySku[item.sku]?.mount !== 'inset')
-    if (!group.length) continue
-    const spans = group.map((item) => unitInterval(item, wall)).sort((a, b) => a.t0 - b.t0)
-    const marks = [wall.thickness / 2, ...spans.flatMap((span) => [span.t0, span.t1]), len - wall.thickness / 2]
-    for (let i = 0; i < marks.length - 1; i += 1) {
-      const left = marks[i]
-      const right = marks[i + 1]
-      const gap = right - left
-      if (gap < 20 || gap > 1500) continue
-      const at = lerp(wall.a, wall.b, ((left + right) / 2) / len)
-      const inward = inwardNormal(wall, walls)
-      const pos = add(at, mul(inward, wall.thickness / 2 + 180))
-      const screen = w2s(pos, cam, width, height)
-      badge(ctx, screen.x, screen.y, formatMm(gap), 'gap')
-    }
-  }
+function dimensionActive(line: DimLine, selection: Selection | null) {
+  if (!selection) return false
+  if (selection.type === 'measure') return line.measureId === selection.id
+  if (selection.type === 'dimension') return line.selectId === selection.id
+  return false
+}
+
+function paintDimension(ctx: CanvasRenderingContext2D, line: DimLine, cam: Cam, width: number, height: number, active: boolean) {
+  const from = w2s(line.from, cam, width, height)
+  const to = w2s(line.to, cam, width, height)
+  const a = w2s(line.a, cam, width, height)
+  const b = w2s(line.b, cam, width, height)
+  ctx.save()
+  ctx.strokeStyle = active ? '#FF6600' : '#5C6570'
+  ctx.lineWidth = active ? 1.6 : 1
+  ctx.beginPath()
+  ctx.moveTo(from.x, from.y)
+  ctx.lineTo(a.x, a.y)
+  ctx.moveTo(to.x, to.y)
+  ctx.lineTo(b.x, b.y)
+  ctx.moveTo(a.x, a.y)
+  ctx.lineTo(b.x, b.y)
+  tick(ctx, a, b)
+  tick(ctx, b, a)
+  ctx.stroke()
+  ctx.restore()
+  const text = formatMm(line.length)
+  ctx.save()
+  ctx.font = '600 11px "Segoe UI", Inter, sans-serif'
+  const textWidth = ctx.measureText(text).width + 14
+  ctx.restore()
+  if (line.gap && line.length < 80) return
+  if (Math.hypot(b.x - a.x, b.y - a.y) < textWidth) return
+  const label = w2s(lerp(line.a, line.b, 0.5), cam, width, height)
+  badge(ctx, label.x, label.y, text, line.gap ? 'gap' : 'room')
+}
+
+function tick(ctx: CanvasRenderingContext2D, at: { x: number; y: number }, toward: { x: number; y: number }) {
+  const dx = toward.x - at.x
+  const dy = toward.y - at.y
+  const length = Math.hypot(dx, dy) || 1
+  const px = -dy / length
+  const py = dx / length
+  ctx.moveTo(at.x - px * 4 - (dx / length) * 4, at.y - py * 4 - (dy / length) * 4)
+  ctx.lineTo(at.x + px * 4 + (dx / length) * 4, at.y + py * 4 + (dy / length) * 4)
 }
 
 function drawSelection(ctx: CanvasRenderingContext2D, design: PlanDesign, walls: Wall[], items: PlacedItem[], cam: Cam, width: number, height: number) {
@@ -671,6 +672,10 @@ export function suggestPlacement(
     if (!host) return null
     return { x: host.x, y: host.y, rotation: host.rotation, wallId: host.wallId, hostId: host.id, elevation: spec.elevation }
   }
+  if (spec.style === 'corner' || spec.style === 'carousel') {
+    const snapped = nearestCornerPose(point, spec, walls)
+    if (snapped) return { ...snapped, elevation: spec.elevation }
+  }
   const near = nearestWall(point, walls)
   if (!near || near.distance > 900) return null
   const cleared = clearancePoint(point, spec.width, near.wall, fixtures, openings, spec.category === 'tall' || spec.height > 1600)
@@ -708,10 +713,10 @@ export function frameOf(walls: Wall[], items: PlacedItem[], width: number, heigh
   })
   items.forEach(grow)
   if (!Number.isFinite(minX)) return { x: 0, y: 0, zoom: 0.16 }
-  minX -= 700
-  minY -= 700
-  maxX += 700
-  maxY += 700
+  minX -= 1100
+  minY -= 1100
+  maxX += 1100
+  maxY += 1100
   return {
     x: (minX + maxX) / 2,
     y: (minY + maxY) / 2,

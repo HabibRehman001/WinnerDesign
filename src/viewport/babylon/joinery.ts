@@ -19,10 +19,21 @@ const toShape = (ring: Pt[]) => ring.map((point) => new BABYLON.Vector3(point.x 
 
 /** Extrudes a plan-space ring so its top face sits at `top` metres. */
 function plate(ctx: BuildContext, parent: BABYLON.Node, ring: Pt[], holes: Pt[][], top: number, thickness: number, finish: Finish) {
-  if (ring.length < 3) return
+  if (ring.length < 3) return null
   const mesh = BABYLON.MeshBuilder.ExtrudePolygon('plate', { shape: toShape(ring), holes: holes.map(toShape), depth: Math.max(0.004, thickness) }, ctx.scene, earcut)
   mesh.position.y = top
   finishMesh(ctx, mesh, finish, parent)
+  return mesh
+}
+
+function ringLength(ring: Pt[]) {
+  let length = 0
+  for (let index = 0; index < ring.length; index++) {
+    const a = ring[index]
+    const b = ring[(index + 1) % ring.length]
+    length += Math.hypot(b.x - a.x, b.y - a.y)
+  }
+  return length / 2000
 }
 
 function band(ctx: BuildContext, parent: BABYLON.Node, a: Pt, b: Pt, y: number, thickness: number, finish: Finish) {
@@ -68,7 +79,16 @@ export function buildJoinery(ctx: BuildContext, input: JoineryInput) {
   if (options.splashback) {
     for (const entry of buildPlates(baseRuns, walls, items, { depthOf: () => 16 })) {
       const top = (entry.runHeight + options.worktopThickness + options.splashHeight) / 1000
-      plate(ctx, root, entry.ring, [], top, options.splashHeight / 1000, { ...worktopFinish(materials), roughness: 0.24 })
+      const mesh = plate(ctx, root, entry.ring, [], top, options.splashHeight / 1000, { color: materials.splashTile, roughness: 0.55 })
+      if (!mesh) continue
+      mesh.material = ctx.bank.tiles(
+        materials.splashTile,
+        materials.splashGrout,
+        materials.splashTileSize,
+        Math.max(0.2, ringLength(entry.ring)),
+        options.splashHeight / 1000,
+        materials.splashTileAngle,
+      )
     }
   }
   if (options.autoCornice) {

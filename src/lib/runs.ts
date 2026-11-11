@@ -1,4 +1,5 @@
 import { catalogBySku, inCorniceRun, inWorktopRun, isFloorNeighbour } from '../catalog'
+import { cornerReturnSpan } from './corners'
 import { dist, inwardNormal, lerp, mul, norm, projectPointToSegment, sub, wallLength } from './geometry'
 import type { CatalogItem, PlacedItem, Wall } from '../types'
 
@@ -13,21 +14,27 @@ export interface CabinetRun {
   itemIds: string[]
 }
 
-function intervals(items: PlacedItem[], wall: Wall, accept: (item: CatalogItem) => boolean) {
+function intervals(items: PlacedItem[], wall: Wall, walls: Wall[], accept: (item: CatalogItem) => boolean) {
   const len = wallLength(wall)
-  return items
+  const own = items
     .filter((item) => item.wallId === wall.id && accept(catalogBySku[item.sku]))
     .map((item) => {
       const t = projectPointToSegment(item, wall.a, wall.b).t * len
       return { t0: t - item.width / 2, t1: t + item.width / 2, depth: item.depth, height: item.height, elevation: item.elevation, id: item.id }
     })
-    .sort((a, b) => a.t0 - b.t0)
+  const returns = items.flatMap((item) => {
+    const spec = catalogBySku[item.sku]
+    if (!spec || (spec.style !== 'corner' && spec.style !== 'carousel') || !accept(spec)) return []
+    const span = cornerReturnSpan(item, walls, wall)
+    return span ? [span] : []
+  })
+  return [...own, ...returns].sort((a, b) => a.t0 - b.t0)
 }
 
 export function buildRuns(items: PlacedItem[], walls: Wall[], kind: 'base' | 'wall'): CabinetRun[] {
   const runs: CabinetRun[] = []
   for (const wall of walls) {
-    const segs = intervals(items, wall, (spec) => (kind === 'base' ? inWorktopRun(spec) : inCorniceRun(spec) && spec.style !== 'hood'))
+    const segs = intervals(items, wall, walls, (spec) => (kind === 'base' ? inWorktopRun(spec) : inCorniceRun(spec) && spec.style !== 'hood'))
     let current: CabinetRun | null = null
     for (const seg of segs) {
       if (!current || seg.t0 > current.t1 + 40) {

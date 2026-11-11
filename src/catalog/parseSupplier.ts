@@ -33,6 +33,8 @@ export interface SupplierCatalog {
   discount: number
   margin: number
   items: CatalogItem[]
+  version: number
+  hidden: boolean
 }
 
 function numberOf(value: unknown, fallback: number) {
@@ -93,5 +95,7 @@ export function parseSupplier(data: unknown): SupplierCatalog {
     discount: numberOf(record.discount, 0),
     margin: numberOf(record.margin, 0),
     items: record.items.map(parseItem),
+    version: Math.max(1, Math.round(numberOf(record.version, 1))),
+    hidden: record.hidden === true,
   }
 }

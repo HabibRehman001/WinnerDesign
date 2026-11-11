@@ -1,15 +1,18 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { DOOR_STYLES, WORKTOPS, catalogBySku } from '../catalog'
 import { designWarnings } from '../lib/checks'
 import { LIGHT_PRESETS } from '../lib/lighting'
-import { offsetLoop, orderedLoop, polygonAreaM2, wallLength } from '../lib/geometry'
+import { formatMm, offsetLoop, orderedLoop, polygonAreaM2, wallLength } from '../lib/geometry'
 import { buildQuote, money } from '../lib/pricing'
 import { RENDER_SIZES, exportRender } from '../lib/renderExport'
 import { exportInstallerPack, exportQuotation, exportSupplierOrder } from '../lib/quotePdf'
 import { canSeeCost } from '../store/useOfficeStore'
 import { useCatalogStore } from '../store/useCatalogStore'
+import { cabinetDoors } from '../lib/fronts'
+import { RAL_CLASSIC, ncsToHex } from '../lib/colours'
+import { layoutDimensions } from '../lib/dimensions'
 import { uid, useDesignStore } from '../store/useDesignStore'
-import type { CurrencyCode, DoorStyle, HandlePlacement, RoofStyle, WorktopFinish } from '../types'
+import type { CurrencyCode, DimensionAlign, DoorHinge, DoorStyle, HandlePlacement, RoofStyle, WorktopFinish } from '../types'
 
 export function InspectorPanel({ width }: { width: number }) {
   const tab = useDesignStore((state) => state.inspectorTab)
@@ -55,6 +58,22 @@ function ObjectTab() {
           Follow roof
         </button>
         <Readout label="Length" value={`${Math.round(wallLength(wall))} mm`} />
+        <label className="block text-[11px] uppercase tracking-wider text-white/45">
+          Dimensions
+          <select
+            value={wall.dimensionAlign ?? 'inherit'}
+            onChange={(event) => {
+              const value = event.target.value
+              useDesignStore.getState().updateWall(wall.id, { dimensionAlign: value === 'inherit' ? undefined : (value as DimensionAlign) })
+            }}
+            className="mt-1 w-full rounded border border-white/10 bg-shell-deep px-2 py-1.5 text-sm normal-case tracking-normal text-white"
+          >
+            <option value="inherit">Inherit</option>
+            <option value="auto">Auto</option>
+            <option value="close">Close to wall</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
         <DeleteButton />
       </div>
     )
@@ -105,9 +124,17 @@ function ObjectTab() {
         {(spec.mount === 'wall' || spec.style === 'hood') && (
           <NumberField label="Hanging height" value={item.elevation} min={200} max={2200} onChange={(value) => useDesignStore.getState().updateItem(item.id, { elevation: value }, false)} />
         )}
-        {(spec.doorCount === 1 || spec.style === 'corner' || spec.style === 'flap') && (
-          <Toggle label="Hinge" value={item.handing === 'left' ? 'Left' : 'Right'} onClick={() => useDesignStore.getState().setHanding(item.id, item.handing === 'left' ? 'right' : 'left')} />
+        {(spec.style === 'corner' || spec.style === 'carousel') && (
+          <Toggle label="Return" value={item.handing === 'left' ? 'Left' : 'Right'} onClick={() => useDesignStore.getState().setHanding(item.id, item.handing === 'left' ? 'right' : 'left')} />
         )}
+        {cabinetDoors(item, spec).map((door, _index, doors) => (
+          <Toggle
+            key={door.index}
+            label={doors.length > 1 ? `Door ${door.index + 1}` : 'Hinge'}
+            value={hingeLabel(door.hinge)}
+            onClick={() => useDesignStore.getState().setFrontHinge(item.id, door.index, nextHinge(door.hinge))}
+          />
+        ))}
         {(spec.doorCount > 0 || spec.drawerCount > 0 || spec.style === 'flap' || spec.style === 'dishwasher') && (
           <NumberField label="Opening" value={item.open ?? 0} min={0} max={90} suffix="°" onChange={(value) => useDesignStore.getState().updateItem(item.id, { open: value }, false)} />
         )}
@@ -115,6 +142,9 @@ function ObjectTab() {
         <DeleteButton />
       </div>
     )
+  }
+  if (selection?.type === 'dimension' || selection?.type === 'measure') {
+    return <MeasureProperties />
   }
   const loop = orderedLoop(walls)
   const inner = loop ? offsetLoop(loop.points, loop.walls.map((wall) => wall.thickness / 2)) : null
@@ -125,6 +155,20 @@ function ObjectTab() {
       <Readout label="Walls" value={String(walls.length)} />
       <Readout label="Floor area" value={loop ? `${area.toFixed(2)} m²` : '—'} />
       <NumberField label="Ceiling" value={options.ceiling} min={2200} max={3200} onChange={(value) => useDesignStore.getState().patchOptions({ ceiling: value })} />
+      <div className="text-[11px] uppercase tracking-wider text-white/45">Dimensions</div>
+      <div className="flex gap-1">
+        {(['auto', 'close', 'manual'] as DimensionAlign[]).map((align) => (
+          <button
+            key={align}
+            title={align === 'auto' ? 'Line up with the outermost wall' : align === 'close' ? 'Keep each line on its own wall' : 'Drag measurement lines'}
+            onClick={() => useDesignStore.getState().patchOptions({ dimensionAlign: align })}
+            className={`flex-1 rounded px-2 py-1.5 text-xs capitalize ${options.dimensionAlign === align ? 'bg-winner' : 'bg-white/10'}`}
+          >
+            {align === 'close' ? 'Close' : align}
+          </button>
+        ))}
+      </div>
+      <p className="text-xs leading-relaxed text-white/45">Auto lines up with the outermost wall. Close hugs each wall. Manual lets you drag a line.</p>
       <div className="text-[11px] uppercase tracking-wider text-white/45">Roof</div>
       <div className="flex gap-1">
         {(['flat', 'shed', 'gable'] as RoofStyle[]).map((style) => (
@@ -185,7 +229,7 @@ function FinishTab() {
         {(Object.keys(DOOR_STYLES) as DoorStyle[]).map((style) => (
           <button
             key={style}
-            onClick={() => useDesignStore.getState().patchMaterials({ doorStyle: style, doorColor: DOOR_STYLES[style].color })}
+            onClick={() => useDesignStore.getState().patchMaterials({ doorStyle: style, doorColor: DOOR_STYLES[style].color, doorColorCode: '' })}
             className={`rounded border px-2 py-2 text-left text-xs ${materials.doorStyle === style ? 'border-winner bg-winner/20' : 'border-white/10'}`}
           >
             <span className="mb-1 block h-5 rounded" style={{ background: DOOR_STYLES[style].color }} />
@@ -193,7 +237,12 @@ function FinishTab() {
           </button>
         ))}
       </div>
-      <ColorField label="Door colour" value={materials.doorColor} onChange={(value) => useDesignStore.getState().patchMaterials({ doorColor: value })} />
+      <ColorField label="Door colour" value={materials.doorColor} onChange={(value) => useDesignStore.getState().patchMaterials({ doorColor: value, doorColorCode: '' })} />
+      <NamedColourFields
+        code={materials.doorColorCode}
+        onRal={(code, hex) => useDesignStore.getState().patchMaterials({ doorColor: hex, doorColorCode: code })}
+        onNcs={(code, hex) => useDesignStore.getState().patchMaterials({ doorColor: hex, doorColorCode: code })}
+      />
       <NumberField label="Grain angle" value={materials.grainAngle} min={0} max={180} suffix="°" onChange={(value) => useDesignStore.getState().patchMaterials({ grainAngle: value })} />
       <div className="text-[11px] uppercase tracking-wider text-white/45">Worktop</div>
       <div className="grid grid-cols-2 gap-2">
@@ -208,7 +257,7 @@ function FinishTab() {
                 category: 'worktop',
                 group: 'Worktop',
                 summary: '',
-                materials: { worktop: finish, worktopColor: WORKTOPS[finish].color },
+                materials: { worktop: finish, worktopColor: WORKTOPS[finish].color, worktopColorCode: '' },
                 options: { autoWorktop: true },
               })
             }
@@ -219,6 +268,12 @@ function FinishTab() {
           </button>
         ))}
       </div>
+      <NamedColourFields
+        code={materials.worktopColorCode}
+        onRal={(code, hex) => useDesignStore.getState().patchMaterials({ worktopColor: hex, worktopColorCode: code })}
+        onNcs={(code, hex) => useDesignStore.getState().patchMaterials({ worktopColor: hex, worktopColorCode: code })}
+      />
+      <ColorField label="Worktop colour" value={materials.worktopColor} onChange={(value) => useDesignStore.getState().patchMaterials({ worktopColor: value, worktopColorCode: '' })} />
       <div className="text-[11px] uppercase tracking-wider text-white/45">Handle</div>
       <div className="flex gap-1">
         {(['bar', 'knob', 'gola'] as const).map((handle) => (
@@ -246,6 +301,11 @@ function FinishTab() {
       <ColorField label="Floor tile" value={materials.floorTile} onChange={(value) => useDesignStore.getState().patchMaterials({ floorTile: value })} />
       <ColorField label="Grout" value={materials.grout} onChange={(value) => useDesignStore.getState().patchMaterials({ grout: value })} />
       <NumberField label="Tile size" value={materials.tileSize} min={100} max={1200} step={50} onChange={(value) => useDesignStore.getState().patchMaterials({ tileSize: value })} />
+      <div className="text-[11px] uppercase tracking-wider text-white/45">Splash tiles</div>
+      <ColorField label="Splash tile" value={materials.splashTile} onChange={(value) => useDesignStore.getState().patchMaterials({ splashTile: value })} />
+      <ColorField label="Splash grout" value={materials.splashGrout} onChange={(value) => useDesignStore.getState().patchMaterials({ splashGrout: value })} />
+      <NumberField label="Splash tile size" value={materials.splashTileSize} min={50} max={600} step={10} onChange={(value) => useDesignStore.getState().patchMaterials({ splashTileSize: value })} />
+      <NumberField label="Splash tile angle" value={materials.splashTileAngle} min={0} max={180} suffix="°" onChange={(value) => useDesignStore.getState().patchMaterials({ splashTileAngle: value })} />
       <div className="text-[11px] uppercase tracking-wider text-white/45">Runs</div>
       {([
         ['autoWorktop', 'Worktops'],
@@ -299,6 +359,7 @@ function QuoteTab() {
   const client = useDesignStore((state) => state.client)
   const projectName = useDesignStore((state) => state.projectName)
   const showDimensions = useDesignStore((state) => state.showDimensions)
+  const measures = useDesignStore((state) => state.measures)
   const defaultThickness = useDesignStore((state) => state.defaultThickness)
   const catalogRevision = useCatalogStore((state) => state.revision)
   const priceGroups = useCatalogStore((state) => state.groups())
@@ -362,7 +423,7 @@ function QuoteTab() {
             projectName,
             client,
             quote,
-            design: { walls, openings, fixtures, items, materials, options, selection: null, showDimensions, defaultThickness },
+            design: { walls, openings, fixtures, items, materials, options, selection: null, showDimensions, defaultThickness, measures },
           })
         }
       >
@@ -383,7 +444,7 @@ function QuoteTab() {
           exportInstallerPack({
             projectName,
             quote,
-            design: { walls, openings, fixtures, items, materials, options, selection: null, showDimensions, defaultThickness },
+            design: { walls, openings, fixtures, items, materials, options, selection: null, showDimensions, defaultThickness, measures },
           })
         }
       >
@@ -404,6 +465,133 @@ function WarningList({ itemId }: { itemId?: string }) {
       {warnings.map((warning) => (
         <p key={`${warning.itemId}-${warning.message}`}>{warning.message}</p>
       ))}
+    </div>
+  )
+}
+
+const HINGE_ORDER: DoorHinge[] = ['left', 'right', 'top', 'bottom']
+
+function hingeLabel(hinge: DoorHinge) {
+  if (hinge === 'left') return 'Left'
+  if (hinge === 'right') return 'Right'
+  if (hinge === 'top') return 'Top'
+  return 'Bottom'
+}
+
+function nextHinge(hinge: DoorHinge): DoorHinge {
+  return HINGE_ORDER[(HINGE_ORDER.indexOf(hinge) + 1) % HINGE_ORDER.length]
+}
+
+function NamedColourFields({ code, onRal, onNcs }: { code: string; onRal: (code: string, hex: string) => void; onNcs: (code: string, hex: string) => void }) {
+  const [ncs, setNcs] = useState(code.startsWith('NCS') ? code : '')
+  const [error, setError] = useState('')
+  return (
+    <div className="space-y-2">
+      <label className="block text-[11px] uppercase tracking-wider text-white/45">
+        RAL Classic
+        <select
+          value={code.startsWith('RAL') ? code : ''}
+          onChange={(event) => {
+            const chosen = RAL_CLASSIC.find((entry) => entry.code === event.target.value)
+            if (chosen) onRal(chosen.code, chosen.hex)
+          }}
+          className="mt-1 w-full rounded border border-white/10 bg-shell-deep px-2 py-1.5 text-sm normal-case tracking-normal text-white"
+        >
+          <option value="">Hex colour</option>
+          {RAL_CLASSIC.map((entry) => (
+            <option key={entry.code} value={entry.code}>
+              {entry.code} {entry.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <form
+        className="space-y-1"
+        onSubmit={(event) => {
+          event.preventDefault()
+          const hex = ncsToHex(ncs)
+          if (!hex) {
+            setError('Use NCS S 0500-N or NCS S 2030-Y30R')
+            return
+          }
+          setError('')
+          onNcs(ncs.trim().toUpperCase(), hex)
+        }}
+      >
+        <label className="block text-[11px] uppercase tracking-wider text-white/45">
+          NCS
+          <input
+            value={ncs}
+            onChange={(event) => setNcs(event.target.value)}
+            placeholder="NCS S 0500-N"
+            className="mt-1 w-full rounded border border-white/10 bg-shell-deep px-2 py-1.5 text-sm normal-case tracking-normal text-white outline-none focus:border-winner"
+          />
+        </label>
+        <button className="w-full rounded bg-white/10 py-1 text-xs" type="submit">
+          Apply NCS
+        </button>
+        {error && <p className="text-[11px] text-handle">{error}</p>}
+        {code.startsWith('NCS') && !error && <p className="text-[11px] text-white/45">{code}</p>}
+      </form>
+    </div>
+  )
+}
+
+function MeasureProperties() {
+  const selection = useDesignStore((state) => state.selection)
+  const walls = useDesignStore((state) => state.walls)
+  const items = useDesignStore((state) => state.items)
+  const measures = useDesignStore((state) => state.measures)
+  const options = useDesignStore((state) => state.options)
+  if (selection?.type === 'measure') {
+    const measure = measures.find((entry) => entry.id === selection.id)
+    if (!measure) return null
+    const line = layoutDimensions(walls, items, measures, options.dimensionAlign).find((entry) => entry.measureId === measure.id)
+    return (
+      <div className="space-y-3">
+        <Header kicker="Measure" title="Free measure" />
+        <Readout label="Length" value={formatMm(line?.length ?? 0)} />
+        <NumberField label="Offset" value={Math.round(measure.offset)} min={-2000} max={2000} onChange={(value) => useDesignStore.getState().updateMeasure(measure.id, { offset: value }, false)} />
+        <Readout label="Alignment" value="Manual" />
+        <DeleteButton />
+      </div>
+    )
+  }
+  if (selection?.type !== 'dimension') return null
+  const wall = walls.find((entry) => entry.id === selection.wallId)
+  if (!wall) return null
+  const lines = layoutDimensions(walls, items, measures, options.dimensionAlign).filter((entry) => entry.selectId === selection.id)
+  const offset = lines[0]?.offset ?? (selection.kind === 'run' ? wall.runOffset : wall.dimensionOffset) ?? 0
+  const length = lines.reduce((sum, entry) => sum + entry.length, 0)
+  return (
+    <div className="space-y-3">
+      <Header kicker="Measure" title={selection.kind === 'run' ? 'Cabinet run' : 'Overall'} />
+      <Readout label="Length" value={formatMm(selection.kind === 'run' ? length : wallLength(wall))} />
+      <NumberField
+        label="Offset"
+        value={Math.round(offset)}
+        min={40}
+        max={2800}
+        onChange={(value) =>
+          useDesignStore.getState().updateWall(
+            wall.id,
+            selection.kind === 'run' ? { dimensionAlign: 'manual', runOffset: value } : { dimensionAlign: 'manual', dimensionOffset: value },
+            false,
+          )
+        }
+      />
+      <label className="block text-[11px] uppercase tracking-wider text-white/45">
+        Alignment
+        <select
+          value={wall.dimensionAlign ?? options.dimensionAlign}
+          onChange={(event) => useDesignStore.getState().updateWall(wall.id, { dimensionAlign: event.target.value as DimensionAlign })}
+          className="mt-1 w-full rounded border border-white/10 bg-shell-deep px-2 py-1.5 text-sm normal-case tracking-normal text-white"
+        >
+          <option value="auto">Auto</option>
+          <option value="close">Close to wall</option>
+          <option value="manual">Manual</option>
+        </select>
+      </label>
     </div>
   )
 }

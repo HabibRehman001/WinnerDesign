@@ -68,8 +68,8 @@ export class MaterialBank {
     return material
   }
 
-  tiles(color: string, grout: string, tileSizeMm: number, spanX: number, spanZ: number) {
-    const key = `tile|${color}|${grout}|${tileSizeMm}|${spanX.toFixed(2)}|${spanZ.toFixed(2)}`
+  tiles(color: string, grout: string, tileSizeMm: number, spanX: number, spanZ: number, angle = 0) {
+    const key = `tile|${color}|${grout}|${tileSizeMm}|${spanX.toFixed(2)}|${spanZ.toFixed(2)}|${angle}`
     const hit = this.cache.get(key)
     if (hit) return hit
     const texture = new BABYLON.DynamicTexture(`tile-${this.textures.size}`, { width: 256, height: 256 }, this.scene, true)
@@ -85,6 +85,7 @@ export class MaterialBank {
     const tile = Math.max(0.05, tileSizeMm / 1000)
     texture.uScale = spanX / tile
     texture.vScale = spanZ / tile
+    texture.wAng = (angle * Math.PI) / 180
     this.textures.set(key, texture)
     const material = new BABYLON.PBRMaterial(`floor-${this.cache.size}`, this.scene)
     material.albedoTexture = texture

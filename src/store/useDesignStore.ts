@@ -1,14 +1,17 @@
 import { create } from 'zustand'
 import { catalogBySku } from '../catalog'
+import { nearestCornerPose } from '../lib/corners'
 import { clampOpening, reseatFixture, reseatItem } from '../lib/geometry'
 import type {
   ClientInfo,
   DesignOptions,
   DesignSnapshot,
+  DoorHinge,
   Fixture,
   Handing,
   LeadInfo,
   Materials,
+  Measure,
   Opening,
   PlacedItem,
   ProjectDocument,
@@ -49,6 +52,8 @@ export interface DesignState extends DesignSnapshot {
   addWall: (wall: Wall) => void
   setWalls: (walls: Wall[], history?: boolean) => void
   updateWall: (id: string, partial: Partial<Wall>, history?: boolean) => void
+  addMeasure: (measure: Measure) => void
+  updateMeasure: (id: string, partial: Partial<Measure>, history?: boolean) => void
   addOpening: (opening: Opening) => void
   updateOpening: (id: string, partial: Partial<Opening>, history?: boolean) => void
   addFixture: (fixture: Fixture) => void
@@ -59,6 +64,7 @@ export interface DesignState extends DesignSnapshot {
   setSelection: (selection: Selection | null) => void
   deleteSelection: () => void
   setHanding: (id: string, handing: Handing) => void
+  setFrontHinge: (id: string, index: number, hinge: DoorHinge) => void
   setFrontsOpen: (degrees: number) => void
   undo: () => void
   redo: () => void
@@ -83,6 +89,7 @@ export function snapshotOf(state: DesignSnapshot): DesignSnapshot {
     projectName: state.projectName,
     defaultThickness: state.defaultThickness,
     walls: clone(state.walls),
+    measures: clone(state.measures ?? []),
     openings: clone(state.openings),
     fixtures: clone(state.fixtures),
     items: clone(state.items),
@@ -104,6 +111,11 @@ function seat(walls: Wall[], items: PlacedItem[], openings: Opening[], fixtures:
   return {
     walls,
     items: items.map((item) => {
+      const spec = catalogBySku[item.sku]
+      if (spec && (spec.style === 'corner' || spec.style === 'carousel')) {
+        const snapped = nearestCornerPose(item, item, walls)
+        if (snapped) return { ...item, ...snapped }
+      }
       const wall = walls.find((entry) => entry.id === item.wallId)
       return wall ? reseatItem(item, wall, walls) : item
     }),
@@ -152,6 +164,7 @@ function readStorage(): { snap: DesignSnapshot; view: ViewMode; showDimensions: 
         documents: data.documents ?? [],
         surveyNotes: data.surveyNotes ?? '',
         walls: data.walls as Wall[],
+        measures: Array.isArray(data.measures) ? (data.measures as Measure[]) : [],
         openings: (data.openings as Opening[]) ?? [],
         fixtures: (data.fixtures as Fixture[]) ?? [],
         items: (data.items as PlacedItem[]).map((item) => ({ open: 0, ...item })),
@@ -216,8 +229,20 @@ export const useDesignStore = create<DesignState>((set, get) => ({
   updateWall: (id, partial, history = true) =>
     set((state) => {
       const walls = state.walls.map((wall) => (wall.id === id ? { ...wall, ...partial } : wall))
-      return withHistory(state, seat(walls, state.items, state.openings, state.fixtures), history)
+      const keys = Object.keys(partial)
+      const cosmetic = keys.length > 0 && keys.every((key) => key === 'dimensionAlign' || key === 'dimensionOffset' || key === 'runOffset')
+      return withHistory(state, cosmetic ? { walls } : seat(walls, state.items, state.openings, state.fixtures), history)
     }),
+  addMeasure: (measure) =>
+    set((state) => withHistory(state, { measures: [...state.measures, measure], selection: { type: 'measure', id: measure.id } }, true)),
+  updateMeasure: (id, partial, history = true) =>
+    set((state) =>
+      withHistory(
+        state,
+        { measures: state.measures.map((measure) => (measure.id === id ? { ...measure, ...partial } : measure)) },
+        history,
+      ),
+    ),
   addOpening: (opening) =>
     set((state) => withHistory(state, { openings: [...state.openings, opening], selection: { type: 'opening', id: opening.id } }, true)),
   updateOpening: (id, partial, history = true) =>
@@ -280,6 +305,8 @@ export const useDesignStore = create<DesignState>((set, get) => ({
       }
       if (selection.type === 'opening') return withHistory(state, { openings: state.openings.filter((opening) => opening.id !== selection.id), selection: null }, true)
       if (selection.type === 'fixture') return withHistory(state, { fixtures: state.fixtures.filter((fixture) => fixture.id !== selection.id), selection: null }, true)
+      if (selection.type === 'measure') return withHistory(state, { measures: state.measures.filter((measure) => measure.id !== selection.id), selection: null }, true)
+      if (selection.type === 'dimension') return state
       return withHistory(
         state,
         {
@@ -290,6 +317,13 @@ export const useDesignStore = create<DesignState>((set, get) => ({
       )
     }),
   setHanding: (id, handing) => get().updateItem(id, { handing }),
+  setFrontHinge: (id, index, hinge) => {
+    const item = get().items.find((entry) => entry.id === id)
+    if (!item) return
+    const fronts = [...(item.fronts ?? []).filter((front) => front.index !== index), { index, hinge }]
+    const handing = index === 0 && (hinge === 'left' || hinge === 'right') ? hinge : item.handing
+    get().updateItem(id, { fronts, handing })
+  },
   setFrontsOpen: (degrees) =>
     set((state) => withHistory(state, { items: state.items.map((item) => ({ ...item, open: degrees })) }, true)),
   undo: () =>
@@ -325,6 +359,7 @@ export const useDesignStore = create<DesignState>((set, get) => ({
       documents: record.documents ?? [],
       surveyNotes: record.surveyNotes ?? '',
       walls: record.walls,
+      measures: record.measures ?? [],
       openings: record.openings ?? [],
       fixtures: record.fixtures ?? [],
       items: record.items.map((item) => ({ open: 0, ...item })),

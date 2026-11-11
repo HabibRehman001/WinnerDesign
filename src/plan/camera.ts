@@ -48,7 +48,7 @@ export const useHudStore = create<HudState>((set, get) => ({
 export function frameCamera(walls: Wall[], width: number, height: number) {
   const items = useDesignStore.getState().items
   const bounds = boundsOf(walls, items)
-  const pad = 700
+  const pad = 1100
   const minX = bounds.minX - pad
   const minY = bounds.minY - pad
   const maxX = bounds.maxX + pad

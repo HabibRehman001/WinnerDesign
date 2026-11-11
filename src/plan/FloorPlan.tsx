@@ -18,6 +18,7 @@ import {
 import { fitPlan, planCamera, screenToWorld, useHudStore } from './camera'
 import { openContextMenu } from '../components/ContextMenu'
 import { endClearance } from '../lib/checks'
+import { hitDimension, layoutDimensions, selectionOf, type DimLine } from '../lib/dimensions'
 import { drawPlan, hitItem, suggestPlacement, type PlanDraft } from './draw'
 import { uid, useDesignStore } from '../store/useDesignStore'
 import type { Opening, PlacedItem, Pt, Selection } from '../types'
@@ -26,6 +27,7 @@ interface LiveDraft {
   snapPoint: Pt | null
   snapLabel: string
   wallStart: Pt | null
+  measureStart: Pt | null
   chainOrigin: Pt | null
   hover: Selection | null
   ghostItem: PlacedItem | null
@@ -37,6 +39,7 @@ interface LiveDraft {
   dragItem: string | null
   dragHandle: { id: string; edge: 1 | -1; anchor: Pt; rotation: number } | null
   dragEnd: { id: string; end: 'a' | 'b' } | null
+  dragDim: DimLine | null
   space: boolean
 }
 
@@ -53,6 +56,7 @@ export function FloorPlan() {
     snapPoint: null,
     snapLabel: '—',
     wallStart: null,
+    measureStart: null,
     chainOrigin: null,
     hover: null,
     ghostItem: null,
@@ -64,6 +68,7 @@ export function FloorPlan() {
     dragItem: null,
     dragHandle: null,
     dragEnd: null,
+    dragDim: null,
     space: false,
   })
 
@@ -100,6 +105,7 @@ export function FloorPlan() {
     const refreshGhost = (raw: Pt) => {
       const state = useDesignStore.getState()
       const snapped = snapPointer(raw)
+      if (state.tool !== 'measure') draft.measureStart = null
       draft.snapPoint = state.tool === 'select' ? null : snapped.point
       draft.snapLabel = state.tool === 'select' ? '—' : snapped.label
       draft.ghostItem = null
@@ -169,6 +175,16 @@ export function FloorPlan() {
         return
       }
       const state = useDesignStore.getState()
+      if (draft.dragDim) {
+        const relX = raw.x - draft.dragDim.origin.x
+        const relY = raw.y - draft.dragDim.origin.y
+        const offset = Math.round(relX * draft.dragDim.axis.x + relY * draft.dragDim.axis.y)
+        const next = clamp(offset, draft.dragDim.min, draft.dragDim.max)
+        if (draft.dragDim.kind === 'free' && draft.dragDim.measureId) state.updateMeasure(draft.dragDim.measureId, { offset: next }, false)
+        else if (draft.dragDim.kind === 'overall' && draft.dragDim.wallId) state.updateWall(draft.dragDim.wallId, { dimensionOffset: next }, false)
+        else if (draft.dragDim.wallId) state.updateWall(draft.dragDim.wallId, { runOffset: next }, false)
+        return
+      }
       if (draft.dragEnd) {
         const snapped = snapPointer(raw).point
         draft.walls = state.walls.map((wall) => (wall.id === draft.dragEnd?.id ? { ...wall, [draft.dragEnd.end]: snapped } : wall))
@@ -221,13 +237,15 @@ export function FloorPlan() {
       }
       refreshGhost(raw)
       if (state.tool === 'select') {
-        draft.hover = pickAt(raw, state.walls, state.openings, state.fixtures, state.items)
+        const line = dimensionAt(raw, state)
+        draft.hover = line ? selectionOf(line) : pickAt(raw, state.walls, state.openings, state.fixtures, state.items)
       } else draft.hover = null
     }
 
     const onDown = (event: PointerEvent) => {
       if (event.button === 2) {
         draft.wallStart = null
+        draft.measureStart = null
         draft.chainOrigin = null
         return
       }
@@ -257,7 +275,17 @@ export function FloorPlan() {
         if (closing) {
           draft.wallStart = null
           draft.chainOrigin = null
-        } else draft.wallStart = snapped.point
+        }         else draft.wallStart = snapped.point
+        return
+      }
+      if (state.tool === 'measure') {
+        if (!draft.measureStart) {
+          draft.measureStart = snapped.point
+          return
+        }
+        if (dist(draft.measureStart, snapped.point) < 40) return
+        useDesignStore.getState().addMeasure({ id: uid('measure'), a: draft.measureStart, b: snapped.point, offset: 180 })
+        draft.measureStart = null
         return
       }
       if (state.tool === 'door' || state.tool === 'window' || state.tool === 'niche') {
@@ -310,6 +338,17 @@ export function FloorPlan() {
           return
         }
       }
+      const line = dimensionAt(raw, state)
+      if (line) {
+        const store = useDesignStore.getState()
+        store.setSelection(selectionOf(line))
+        if (line.draggable) {
+          store.beginGesture()
+          if (useDesignStore.getState().gesturing) draft.dragDim = line
+        }
+        canvas.setPointerCapture(event.pointerId)
+        return
+      }
       const hit = pickAt(raw, state.walls, state.openings, state.fixtures, state.items)
       useDesignStore.getState().setSelection(hit)
       if (hit?.type === 'item') {
@@ -320,6 +359,10 @@ export function FloorPlan() {
 
     const onUp = () => {
       const state = useDesignStore.getState()
+      if (draft.dragDim) {
+        state.endGesture()
+        draft.dragDim = null
+      }
       if (draft.items) state.replaceItems(draft.items)
       if (draft.walls) state.setWalls(draft.walls)
       draft.pan = null
@@ -345,6 +388,7 @@ export function FloorPlan() {
       if (event.code === 'Space') draft.space = true
       if (event.key === 'Escape') {
         draft.wallStart = null
+        draft.measureStart = null
         draft.chainOrigin = null
       }
     }
@@ -386,11 +430,13 @@ export function FloorPlan() {
             selection: state.selection,
             showDimensions: state.showDimensions,
             defaultThickness: state.defaultThickness,
+            measures: state.measures,
           },
           {
             snapPoint: draft.snapPoint,
             snapLabel: draft.snapLabel,
             wallStart: draft.wallStart,
+            measureStart: draft.measureStart,
             hover: draft.hover,
             ghostItem: draft.ghostItem,
             ghostOpening: draft.ghostOpening,
@@ -414,7 +460,8 @@ export function FloorPlan() {
       const { sx, sy } = localPoint(event)
       const raw = screenToWorld(sx, sy)
       const state = useDesignStore.getState()
-      const hit = pickAt(raw, state.walls, state.openings, state.fixtures, state.items)
+      const line = dimensionAt(raw, state)
+      const hit = line ? selectionOf(line) : pickAt(raw, state.walls, state.openings, state.fixtures, state.items)
       if (hit) state.setSelection(hit)
       openContextMenu(event.clientX, event.clientY, hit)
     })
@@ -457,6 +504,11 @@ function endpointAt(point: Pt, wall: { a: Pt; b: Pt }): 'a' | 'b' | null {
   if (dist(point, wall.a) <= tol) return 'a'
   if (dist(point, wall.b) <= tol) return 'b'
   return null
+}
+
+function dimensionAt(point: Pt, state: ReturnType<typeof useDesignStore.getState>) {
+  if (!state.showDimensions) return null
+  return hitDimension(point, layoutDimensions(state.walls, state.items, state.measures, state.options.dimensionAlign), 8 / planCamera.zoom)
 }
 
 function pickAt(point: Pt, walls: { id: string; a: Pt; b: Pt; thickness: number }[], openings: Opening[], fixtures: { id: string; x: number; y: number; width: number; depth: number; rotation: number }[], items: PlacedItem[]): Selection | null {
